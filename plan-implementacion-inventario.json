@@ -1,0 +1,1069 @@
+{
+  "$schema_version": "1.0",
+  "meta": {
+    "nombre_proyecto": "Sistema de Gestión de Inventario (Web)",
+    "objetivo": "Reconstruir en web un programa de escritorio Qt/C++ de gestión de inventario de bodega (víveres, ferretería, quincallería), conservando EXACTAMENTE la lógica de negocio y las fórmulas, con arquitectura limpia y diseño con identidad propia.",
+    "fecha_plan": "2026-08-12",
+    "idioma_ui": "es (español). Todos los textos visibles, labels, placeholders, toasts y mensajes de error en español.",
+    "ejecutor_previsto": "Un agente de codificación (Sonnet) que debe implementar este JSON al pie de la letra, sin inventar funcionalidad extra.",
+    "reglas_globales_para_el_ejecutor": [
+      "NO agregar autenticación, login, middleware de protección, ni pantallas de acceso. La app es pública.",
+      "NO agregar módulo de ventas, ni campos 'Precio unitario final (Bs)' / 'Precio unitario final ($)' editables, ni botón 'Guardar Cambios'.",
+      "NO reordenar productos: siempre orden de inserción (ORDER BY id ASC).",
+      "Toda mutación persiste inmediatamente en Supabase mediante Server Actions.",
+      "Los 4 campos calculados se computan SIEMPRE con la función pura de lib/calculations.ts y se PERSISTEN en la base de datos (además de recalcularse en cada cambio).",
+      "No usar localStorage ni estado solo-cliente como fuente de verdad.",
+      "No usar ORM (ni Prisma ni Drizzle): acceso directo con @supabase/supabase-js.",
+      "Instalar dependencias con pnpm ANTES de escribir los archivos que las importan.",
+      "Verificar en el navegador con el skill agent-browser al terminar (crear, editar, eliminar, buscar, tasa global)."
+    ]
+  },
+
+  "prerrequisitos": {
+    "integraciones": [
+      {
+        "nombre": "Supabase",
+        "obligatoria": true,
+        "como_obtenerla": "Llamar la herramienta GetOrRequestIntegration con names: [\"Supabase\"] ANTES de escribir cualquier código de acceso a datos. Si no está conectada, el usuario recibirá una tarjeta para conectarla.",
+        "skills_a_invocar": ["supabase-on-vercel", "marketplace-supabase-supabase", "shadcn", "agent-browser"]
+      }
+    ],
+    "variables_entorno": [
+      {
+        "key": "NEXT_PUBLIC_SUPABASE_URL",
+        "provista_por": "integración Supabase",
+        "uso": "URL del proyecto. Solo se usa desde el servidor en este proyecto (aunque el prefijo sea NEXT_PUBLIC)."
+      },
+      {
+        "key": "SUPABASE_SERVICE_ROLE_KEY",
+        "provista_por": "integración Supabase",
+        "uso": "Clave de servicio usada EXCLUSIVAMENTE en el servidor (Server Actions y Server Components). NUNCA importar el cliente que la usa desde un archivo con 'use client'.",
+        "critico": true
+      },
+      {
+        "key": "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "provista_por": "integración Supabase",
+        "uso": "No requerida por el diseño elegido (todo pasa por servidor). Dejar sin usar."
+      }
+    ],
+    "notas_env": "Antes de asumir que falta una variable, llamar GetOrRequestIntegration con fetchAll: true y revisar el inventario devuelto."
+  },
+
+  "stack": {
+    "framework": "Next.js 16.3.0 (App Router, Server Components + Server Actions, Turbopack por defecto)",
+    "react": "19",
+    "typescript": "5.7.3 (strict)",
+    "estilos": "Tailwind CSS v4 (sin tailwind.config; tokens en app/globals.css dentro de @theme inline)",
+    "ui": "shadcn/ui estilo 'base-nova' sobre @base-ui/react (ya configurado en components.json)",
+    "base_de_datos": "PostgreSQL gestionado por Supabase",
+    "acceso_datos": "@supabase/supabase-js (cliente server-side con service role)",
+    "despliegue": "Vercel",
+    "package_manager": "pnpm"
+  },
+
+  "dependencias": {
+    "ya_instaladas_no_reinstalar": {
+      "next": "16.3.0",
+      "react": "^19",
+      "react-dom": "^19",
+      "@base-ui/react": "^1.5.0",
+      "lucide-react": "^1.16.0",
+      "class-variance-authority": "^0.7.1",
+      "clsx": "^2.1.1",
+      "tailwind-merge": "^3.3.1",
+      "tw-animate-css": "^1.4.0",
+      "tailwindcss": "^4.3.3",
+      "@tailwindcss/postcss": "^4.3.3",
+      "@vercel/analytics": "1.6.1",
+      "shadcn": "^4.8.0",
+      "typescript": "5.7.3"
+    },
+    "a_instalar": [
+      {
+        "paquete": "@supabase/supabase-js",
+        "version": "2.112.2",
+        "comando": "pnpm add @supabase/supabase-js@2.112.2",
+        "motivo": "Acceso a PostgreSQL de Supabase desde el servidor.",
+        "nota": "Verificada como última versión estable al 2026-08-12. Requiere Node >= 22 (Vercel usa Node 22+ por defecto; si el runtime fuera Node 20, usar 2.109.0)."
+      },
+      {
+        "paquete": "sonner",
+        "version": "2.0.8",
+        "comando": "pnpm dlx shadcn@latest add sonner",
+        "motivo": "Toasts de feedback ('Producto agregado', 'Tasa global aplicada', errores). El CLI de shadcn instala sonner y crea components/ui/sonner.tsx compatible con el estilo base-nova.",
+        "nota": "Si el CLI no instala la dependencia, ejecutar además: pnpm add sonner@2.0.8"
+      }
+    ],
+    "componentes_shadcn_a_agregar": {
+      "comando": "pnpm dlx shadcn@latest add dialog alert-dialog input label separator badge skeleton sonner",
+      "lista": [
+        { "componente": "dialog", "uso": "Modal de edición y modal de agregar producto." },
+        { "componente": "alert-dialog", "uso": "Confirmación de eliminación y confirmación de nombre duplicado." },
+        { "componente": "input", "uso": "Todos los campos de formulario y el buscador." },
+        { "componente": "label", "uso": "Labels accesibles de formularios." },
+        { "componente": "separator", "uso": "Separadores dentro del modal de detalle." },
+        { "componente": "badge", "uso": "Chip de stock y de tasa dentro del modal." },
+        { "componente": "skeleton", "uso": "Estado de carga inicial / Suspense fallback." },
+        { "componente": "sonner", "uso": "Toaster global en app/layout.tsx." }
+      ],
+      "ya_existente": "components/ui/button.tsx (NO regenerar)",
+      "nota": "Si algún componente no existe en el registry 'base-nova', crearlo manualmente siguiendo el patrón de components/ui/button.tsx (cva + cn) en lugar de cambiar el estilo del proyecto."
+    },
+    "dependencias_explicitamente_descartadas": [
+      "swr / react-query: innecesarias. La sincronización se hace con revalidatePath + useOptimistic.",
+      "prisma / drizzle: prohibido ORM para SQL en este entorno.",
+      "zod: opcional; la validación se hace con una función pura propia (lib/validation.ts) para no añadir peso. Si el ejecutor prefiere zod, usar zod@4 y mantener los mismos mensajes de error en español.",
+      "next-auth / @supabase/ssr: no hay autenticación ni sesiones."
+    ]
+  },
+
+  "base_de_datos": {
+    "metodo_de_aplicacion": "Aplicar el esquema con el MCP de Supabase (herramienta de ejecución SQL / apply_migration) siguiendo el skill 'supabase-on-vercel'. Además guardar el SQL en scripts/001_create_products.sql para trazabilidad.",
+    "tabla": "products",
+    "schema": "public",
+    "sql": "create table if not exists public.products (\n  id bigint generated by default as identity primary key,\n  nombre text not null,\n  precio_usd numeric(14,4) not null default 0,\n  cantidad numeric(14,4) not null default 1,\n  porcentaje numeric(9,4) not null default 0,\n  tasa numeric(14,4) not null default 0,\n  precio_bs numeric(18,4) not null default 0,\n  valor_mas_porcentaje numeric(18,4) not null default 0,\n  valor_final_unidad_bs numeric(18,4) not null default 0,\n  valor_final_unidad_usd numeric(18,4) not null default 0,\n  created_at timestamptz not null default now()\n);\n\ncreate index if not exists products_nombre_lower_idx on public.products (lower(nombre));\n\nalter table public.products enable row level security;\n\n-- Sin políticas para anon/authenticated: el acceso ocurre solo vía service role\n-- desde el servidor (las Server Actions), que hace bypass de RLS.\n-- Esto evita exponer escritura pública directa a la API REST de Supabase\n-- aunque la app en sí no tenga login.",
+    "seed_opcional": {
+      "archivo": "scripts/002_seed_products.sql",
+      "aplicar": "Solo si el usuario lo pide explícitamente. Por defecto la app arranca vacía y muestra el estado vacío.",
+      "sql": "-- Ejemplo (NO aplicar por defecto)\n-- insert into public.products (nombre, precio_usd, cantidad, porcentaje, tasa, precio_bs, valor_mas_porcentaje, valor_final_unidad_bs, valor_final_unidad_usd)\n-- values ('Harina de maíz', 1.2000, 24, 35, 40.0000, 48.0000, 64.8000, 2.7000, 0.0675);"
+    },
+    "decisiones_y_justificacion": [
+      "id bigint identity + ORDER BY id ASC garantiza el orden de inserción estático exigido.",
+      "CRÍTICO: debe ser 'generated BY DEFAULT as identity' (no 'ALWAYS'). Con ALWAYS, el upsert por lotes de applyGlobalRate falla con el error 428C9 'cannot insert a non-DEFAULT value into column id' porque el payload incluye el id explícito.",
+      "numeric (no float) para evitar errores de coma flotante en dinero.",
+      "cantidad es numeric para tolerar decimales (kg, litros); la validación mínima exige > 0.",
+      "Los campos calculados se persisten porque el prompt lo pide explícitamente ('se deben calcular automáticamente y guardar en la base de datos').",
+      "NO hay constraint UNIQUE en nombre: los duplicados están permitidos (la advertencia es informativa, no bloqueante)."
+    ],
+    "mapeo_campos": [
+      { "ui": "Nombre", "columna": "nombre", "editable": true, "obligatorio": true },
+      { "ui": "Precio ($)", "columna": "precio_usd", "editable": true, "obligatorio": true },
+      { "ui": "Cantidad (Stock)", "columna": "cantidad", "editable": true, "obligatorio": true },
+      { "ui": "Porcentaje (%)", "columna": "porcentaje", "editable": true, "obligatorio": false, "default": 0 },
+      { "ui": "Tasa", "columna": "tasa", "editable": true, "obligatorio": true },
+      { "ui": "Precio (Bs)", "columna": "precio_bs", "editable": false, "calculado": true },
+      { "ui": "Valor más el %", "columna": "valor_mas_porcentaje", "editable": false, "calculado": true },
+      { "ui": "Valor Final por Unidad (Bs)", "columna": "valor_final_unidad_bs", "editable": false, "calculado": true },
+      { "ui": "Valor Final por Unidad ($)", "columna": "valor_final_unidad_usd", "editable": false, "calculado": true }
+    ]
+  },
+
+  "logica_de_negocio": {
+    "formulas": [
+      { "campo": "precio_bs", "formula": "tasa * precio_usd" },
+      { "campo": "valor_mas_porcentaje", "formula": "precio_bs * (1 + porcentaje / 100)", "nota_critica": "Es un INCREMENTO PORCENTUAL, no una suma del número. Si porcentaje = 35 → precio_bs * 1.35." },
+      { "campo": "valor_final_unidad_bs", "formula": "valor_mas_porcentaje / cantidad" },
+      { "campo": "valor_final_unidad_usd", "formula": "valor_final_unidad_bs / tasa" }
+    ],
+    "guardas": [
+      "Si cantidad <= 0 → valor_final_unidad_bs = 0 y valor_final_unidad_usd = 0 (evitar división por cero / Infinity).",
+      "Si tasa <= 0 → valor_final_unidad_usd = 0.",
+      "Cualquier resultado NaN o no finito se normaliza a 0.",
+      "Redondear cada campo calculado a 4 decimales antes de persistir (helper round4)."
+    ],
+    "cuando_recalcular": [
+      "Al crear un producto.",
+      "Al editar un producto (cualquier campo editable).",
+      "Al aplicar la tasa global (recalcular TODOS los productos con la nueva tasa).",
+      "En el modal de edición, en vivo mientras el usuario escribe (preview de los 4 valores derivados) usando la misma función pura."
+    ],
+    "tasa_global": {
+      "comportamiento": "Sobrescribe la columna tasa de TODOS los productos sin excepción, incluso los que tenían tasa individual distinta, y recalcula los 4 derivados de cada uno.",
+      "implementacion": "En applyGlobalRate: leer todos los productos (id, precio_usd, cantidad, porcentaje), recalcular en JS con la nueva tasa y hacer un upsert por lotes (chunks de 500) con onConflict 'id' — NO hacer un UPDATE SQL por fila en un bucle, y NO delegar el cálculo a SQL para mantener una sola fuente de verdad de las fórmulas.",
+      "persistencia_de_la_tasa_global": "NO se guarda en base de datos (no fue pedido). Es un input controlado en cliente; el valor efectivo por producto ya queda en products.tasa.",
+      "confirmacion": "Mostrar AlertDialog: 'Esto sobrescribirá la tasa de los N productos del inventario. ¿Continuar?' (previene una acción destructiva accidental; sigue siendo confirmar/cancelar simple)."
+    },
+    "duplicados_por_nombre": {
+      "deteccion": "Comparación case-insensitive y trim: nombre.trim().toLowerCase() contra la lista ya cargada en cliente (y verificación en servidor con .ilike antes de insertar si force !== true).",
+      "flujo": "1) Usuario envía el formulario de agregar. 2) Si existe coincidencia → AlertDialog: 'Ya existe un producto llamado \"X\" en el inventario. ¿Deseas agregarlo de todas formas?' con acciones 'Agregar de todas formas' / 'Cancelar'. 3) Si confirma → llamar createProduct con force: true y crear el duplicado.",
+      "importante": "La advertencia NO bloquea. Nunca rechazar la creación por duplicado si force === true."
+    },
+    "eliminar": "AlertDialog: '¿Estás seguro de que deseas eliminar este producto?' con 'Eliminar' (destructivo) / 'Cancelar'. Solo al confirmar se llama deleteProduct.",
+    "buscador": "Filtro en cliente, en tiempo real (onChange, sin botón y sin debounce necesario), únicamente sobre nombre: normalizar ambos lados con trim + toLowerCase + eliminación de acentos (normalize('NFD').replace(/\\p{Diacritic}/gu,'')) e incluir por 'includes'. NO filtrar por ningún otro campo. NO reordenar el resultado."
+  },
+
+  "arquitectura": {
+    "patron_de_datos": "app/page.tsx (Server Component) obtiene los productos con getProducts() y los pasa como prop a <InventoryView initialProducts={...} /> (Client Component). Las mutaciones son Server Actions ('use server') que hacen el cálculo + persistencia y luego revalidatePath('/'). En cliente se usa useOptimistic + useTransition para respuesta instantánea.",
+    "prohibido": [
+      "fetch dentro de useEffect",
+      "importar lib/supabase/server.ts desde un componente cliente",
+      "duplicar las fórmulas en más de un archivo (solo lib/calculations.ts)"
+    ],
+    "arbol_de_archivos": [
+      {
+        "path": "app/layout.tsx",
+        "accion": "modificar",
+        "contenido": "Fuentes next/font/google: Instrument_Serif (weight 400, subsets latin, variable --font-display) y Geist (subsets latin, variable --font-sans). <html lang=\"es\" className=\"bg-background\">. Body con font-sans y antialiased. Metadata: title 'Inventario — Gestión de Bodega', description en español. viewport con themeColor. Incluir <Toaster /> de components/ui/sonner y <Analytics /> de @vercel/analytics/next."
+      },
+      {
+        "path": "app/globals.css",
+        "accion": "modificar",
+        "contenido": "Mantener @import 'tailwindcss' y tw-animate-css. Definir los tokens del bloque design_system.tokens en :root y .dark, y mapearlos en @theme inline (incluyendo --font-sans, --font-display). Añadir utilidad .num { font-variant-numeric: tabular-nums; letter-spacing: -0.02em }."
+      },
+      {
+        "path": "app/page.tsx",
+        "accion": "reemplazar",
+        "contenido": "Server Component async. export const dynamic = 'force-dynamic'. Llama getProducts() y renderiza <main> con <AppHeader />, <GlobalRateBar />, <InventoryView initialProducts={products} />. Envolver la lista en <Suspense> con <ProductGridSkeleton /> si se separa el fetch. Sin auth."
+      },
+      {
+        "path": "app/error.tsx",
+        "accion": "crear",
+        "contenido": "Error boundary en español con botón 'Reintentar' (reset())."
+      },
+      {
+        "path": "app/actions/products.ts",
+        "accion": "crear",
+        "contenido": "'use server'. Exporta createProduct, updateProduct, deleteProduct, applyGlobalRate. Ver bloque 'server_actions'."
+      },
+      {
+        "path": "lib/supabase/server.ts",
+        "accion": "crear",
+        "contenido": "import 'server-only'. createClient() que devuelve createClient<Database>(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } }). Lanzar Error explícito en español si falta alguna env var."
+      },
+      {
+        "path": "lib/types.ts",
+        "accion": "crear",
+        "contenido": "export type Product = { id: number; nombre: string; precio_usd: number; cantidad: number; porcentaje: number; tasa: number; precio_bs: number; valor_mas_porcentaje: number; valor_final_unidad_bs: number; valor_final_unidad_usd: number; created_at: string }. export type ProductInput = { nombre: string; precio_usd: number; cantidad: number; porcentaje: number; tasa: number }. export type DerivedValues = { precio_bs: number; valor_mas_porcentaje: number; valor_final_unidad_bs: number; valor_final_unidad_usd: number }. export type ActionResult<T = void> = { ok: true; data?: T } | { ok: false; error: string }."
+      },
+      {
+        "path": "lib/calculations.ts",
+        "accion": "crear",
+        "contenido": "ÚNICA fuente de verdad de las fórmulas. export function round4(n: number): number. export function calculateDerived(input: { precio_usd: number; cantidad: number; porcentaje: number; tasa: number }): DerivedValues implementando las fórmulas y guardas del bloque logica_de_negocio. Debe ser pura, sin dependencias, importable desde cliente y servidor."
+      },
+      {
+        "path": "lib/validation.ts",
+        "accion": "crear",
+        "contenido": "export function parseNumberField(raw: string): number | null (acepta coma o punto decimal: raw.replace(',', '.')). export function validateProductInput(input): { ok: true; value: ProductInput } | { ok: false; errors: Record<string,string> } con reglas del bloque 'validaciones'."
+      },
+      {
+        "path": "lib/data.ts",
+        "accion": "crear",
+        "contenido": "import 'server-only'. export async function getProducts(): Promise<Product[]> → supabase.from('products').select('*').order('id', { ascending: true }); mapear numeric (string) a Number en TODOS los campos numéricos. export async function countByName(nombre: string): Promise<number> con .ilike('nombre', nombre.trim())."
+      },
+      {
+        "path": "lib/format.ts",
+        "accion": "crear",
+        "contenido": "export const formatBs = (n:number) => new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n) + ' Bs'. export const formatUsd = (n:number) => '$' + new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n). export const formatNumber para cantidad/porcentaje/tasa. Usar SIEMPRE locale fijo para evitar mismatch de hidratación."
+      },
+      {
+        "path": "components/inventory/app-header.tsx",
+        "accion": "crear",
+        "contenido": "Server/estático. Header con wordmark en font-display ('INVENTARIO'), subtítulo pequeño en mayúsculas con tracking amplio ('Gestión de bodega'), y contador de productos. Elemento semántico <header>."
+      },
+      {
+        "path": "components/inventory/inventory-view.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. Orquestador: recibe initialProducts; mantiene el estado optimista (useOptimistic) y el término de búsqueda; renderiza <Toolbar /> (buscador + botón Agregar + barra de tasa global), <ProductGrid /> y los modales. Deriva la lista filtrada con useMemo. Muestra <EmptyState /> si no hay productos y <NoResults /> si la búsqueda no coincide."
+      },
+      {
+        "path": "components/inventory/search-input.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. Input controlado con icono Search (lucide), aria-label 'Buscar producto por nombre', botón de limpiar (X) cuando hay texto, type=\"search\"."
+      },
+      {
+        "path": "components/inventory/global-rate-bar.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. Input numérico 'Tasa Global' + botón 'Aplicar a todos'. Al enviar abre AlertDialog de confirmación; al confirmar llama applyGlobalRate(tasa) dentro de useTransition, muestra estado 'Aplicando…' y toast de éxito/error. Valida tasa > 0. Es el elemento visual firma (acento)."
+      },
+      {
+        "path": "components/inventory/product-grid.tsx",
+        "accion": "crear",
+        "contenido": "Grid responsive: grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3. Mapea productos en su orden recibido (sin sort) usando key={product.id}."
+      },
+      {
+        "path": "components/inventory/product-card.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. Tarjeta colapsada que muestra SOLO: nombre del producto y Valor Final por Unidad (Bs) (número grande, tabular). Botones icon-only 'Editar' (Pencil) y 'Eliminar' (Trash2) con sr-only labels. Toda la tarjeta es clickeable para abrir el modal de detalle/edición (role=button + onKeyDown Enter/Space, o un botón que envuelve el contenido). NO mostrar precio $, precio Bs, porcentaje, valor más el %, valor final $, ni tasa."
+      },
+      {
+        "path": "components/inventory/product-form-fields.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. Campos compartidos entre agregar y editar: nombre, precio_usd, cantidad, porcentaje (opcional), tasa. inputMode='decimal', step='any'. Muestra errores por campo con aria-invalid + aria-describedby."
+      },
+      {
+        "path": "components/inventory/add-product-dialog.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. Dialog con el formulario de creación + preview en vivo de los 4 derivados (calculateDerived). Al enviar: validar → si hay nombre duplicado en la lista, abrir AlertDialog de advertencia → crear con force. Cierra el modal, limpia el formulario y muestra toast 'Producto agregado'."
+      },
+      {
+        "path": "components/inventory/edit-product-dialog.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. Dialog controlado con el producto seleccionado. Muestra los campos editables (incluida la tasa individual) y un panel de solo-lectura con los 4 derivados recalculados en vivo. Botón 'Guardar' llama updateProduct (NO existe un 'Guardar Cambios' global de la app; este es el submit del modal, que sí es permitido). Toast 'Producto actualizado'."
+      },
+      {
+        "path": "components/inventory/delete-product-dialog.tsx",
+        "accion": "crear",
+        "contenido": "'use client'. AlertDialog de confirmación de borrado. Al confirmar llama deleteProduct y muestra toast 'Producto eliminado'."
+      },
+      {
+        "path": "components/inventory/empty-state.tsx",
+        "accion": "crear",
+        "contenido": "'use client' o estático. Estado vacío: 'Tu inventario está vacío' + CTA 'Agregar primer producto'. Variante 'sin resultados' para búsqueda sin coincidencias."
+      },
+      {
+        "path": "components/inventory/product-grid-skeleton.tsx",
+        "accion": "crear",
+        "contenido": "6 skeletons con la forma de la tarjeta."
+      },
+      {
+        "path": "scripts/001_create_products.sql",
+        "accion": "crear",
+        "contenido": "El SQL de base_de_datos.sql (registro del esquema aplicado)."
+      },
+      {
+        "path": "next.config.mjs",
+        "accion": "modificar",
+        "contenido": "Añadir async headers() con: X-Content-Type-Options: nosniff, Referrer-Policy: strict-origin-when-cross-origin, Strict-Transport-Security: max-age=63072000, X-Frame-Options: SAMEORIGIN, Permissions-Policy: camera=(), microphone=(), geolocation=(). NO usar <meta http-equiv>."
+      },
+      {
+        "path": "README.md",
+        "accion": "crear_solo_si_el_usuario_lo_pide",
+        "contenido": "No crear documentación por defecto."
+      }
+    ]
+  },
+
+  "server_actions": {
+    "archivo": "app/actions/products.ts",
+    "reglas": [
+      "Directiva 'use server' al inicio del archivo.",
+      "Cada acción devuelve ActionResult (nunca lanza al cliente sin capturar): try/catch, console.log('[v0] ...') en errores, y mensaje en español.",
+      "Todas revalidan con revalidatePath('/') al final del camino feliz.",
+      "Todas recalculan los derivados con calculateDerived antes de escribir.",
+      "Validar la entrada en el servidor con validateProductInput (no confiar en el cliente)."
+    ],
+    "acciones": [
+      {
+        "nombre": "createProduct",
+        "firma": "async function createProduct(input: ProductInput, options?: { force?: boolean }): Promise<ActionResult<Product>>",
+        "pasos": [
+          "Validar input; si falla → { ok:false, error }.",
+          "Si !options?.force → contar duplicados por nombre (ilike). Si existe → { ok:false, error:'DUPLICADO', data:{ count } } usando un campo 'code: \"DUPLICATE\"' en el resultado para que el cliente muestre la advertencia. (El cliente ya suele detectarlo antes; esta es la red de seguridad.)",
+          "calculateDerived(input).",
+          "insert(...).select().single().",
+          "revalidatePath('/') y devolver el producto mapeado."
+        ]
+      },
+      {
+        "nombre": "updateProduct",
+        "firma": "async function updateProduct(id: number, input: ProductInput): Promise<ActionResult<Product>>",
+        "pasos": [
+          "Validar id (entero positivo) e input.",
+          "calculateDerived(input).",
+          "update(...).eq('id', id).select().single().",
+          "revalidatePath('/')."
+        ],
+        "nota": "El nombre duplicado en edición NO dispara advertencia (el prompt solo la exige al agregar)."
+      },
+      {
+        "nombre": "deleteProduct",
+        "firma": "async function deleteProduct(id: number): Promise<ActionResult>",
+        "pasos": ["delete().eq('id', id)", "revalidatePath('/')"]
+      },
+      {
+        "nombre": "applyGlobalRate",
+        "firma": "async function applyGlobalRate(tasa: number): Promise<ActionResult<{ updated: number }>>",
+        "pasos": [
+          "Validar tasa: número finito > 0 → si no, error 'La tasa global debe ser un número mayor que 0.'.",
+          "select('id, precio_usd, cantidad, porcentaje').order('id').",
+          "Para cada fila: derived = calculateDerived({ ...fila, tasa }).",
+          "upsert por chunks de 500 con { onConflict: 'id' } incluyendo id, tasa y los 4 derivados.",
+          "revalidatePath('/') y devolver { updated: filas.length }."
+        ]
+      }
+    ]
+  },
+
+  "codigo_listo_para_copiar": {
+    "instrucciones_para_el_ejecutor": [
+      "Cada entrada tiene 'path' y 'lineas'. Escribir el archivo uniendo el array 'lineas' con '\\n' (una línea por elemento, sin añadir ni reordenar nada).",
+      "Este código es NORMATIVO: es la fuente de verdad. Si algo en las descripciones textuales del árbol de archivos parece contradecirlo, gana este código.",
+      "NO reescribir las fórmulas de calculateDerived ni duplicarlas en otro archivo. Todo (servidor, cliente y preview en vivo) debe importar desde '@/lib/calculations'.",
+      "Los alias '@/...' ya funcionan por el tsconfig del proyecto.",
+      "Los 6 archivos de este bloque son autocontenidos entre sí: types → calculations → validation → supabase/server → data → actions/products. Escribirlos en ese orden."
+    ],
+    "archivos": [
+      {
+        "path": "lib/types.ts",
+        "nota": "Sustituye la descripción del árbol de archivos: ActionResult incluye 'code' opcional para señalizar el duplicado no bloqueante.",
+        "lineas": [
+          "export type Product = {",
+          "  id: number",
+          "  nombre: string",
+          "  precio_usd: number",
+          "  cantidad: number",
+          "  porcentaje: number",
+          "  tasa: number",
+          "  precio_bs: number",
+          "  valor_mas_porcentaje: number",
+          "  valor_final_unidad_bs: number",
+          "  valor_final_unidad_usd: number",
+          "  created_at: string",
+          "}",
+          "",
+          "/** Campos que el usuario ingresa manualmente. */",
+          "export type ProductInput = {",
+          "  nombre: string",
+          "  precio_usd: number",
+          "  cantidad: number",
+          "  porcentaje: number",
+          "  tasa: number",
+          "}",
+          "",
+          "/** Campos derivados: nunca los escribe el usuario. */",
+          "export type DerivedValues = {",
+          "  precio_bs: number",
+          "  valor_mas_porcentaje: number",
+          "  valor_final_unidad_bs: number",
+          "  valor_final_unidad_usd: number",
+          "}",
+          "",
+          "/** Entrada mínima para calcular los derivados. */",
+          "export type CalcInput = {",
+          "  precio_usd: number",
+          "  cantidad: number",
+          "  porcentaje: number",
+          "  tasa: number",
+          "}",
+          "",
+          "export type ActionErrorCode = \"VALIDATION\" | \"DUPLICATE\" | \"NOT_FOUND\" | \"UNKNOWN\"",
+          "",
+          "export type ActionResult<T = void> =",
+          "  | { ok: true; data: T }",
+          "  | { ok: false; error: string; code: ActionErrorCode; fieldErrors?: Record<string, string> }",
+          "",
+          "/** Errores de validación por campo, para pintarlos debajo de cada input. */",
+          "export type FieldErrors = Partial<Record<keyof ProductInput, string>>"
+        ]
+      },
+      {
+        "path": "lib/calculations.ts",
+        "nota": "ÚNICA fuente de verdad de las 4 fórmulas. Archivo puro, sin imports de runtime: se usa igual en Server Actions y en el preview en vivo del modal.",
+        "lineas": [
+          "import type { CalcInput, DerivedValues } from \"@/lib/types\"",
+          "",
+          "/**",
+          " * Lógica de negocio heredada del programa de escritorio (Qt/C++).",
+          " * NO modificar las fórmulas: son el corazón del sistema.",
+          " *",
+          " *   precio_bs               = tasa * precio_usd",
+          " *   valor_mas_porcentaje    = precio_bs incrementado en 'porcentaje' %  ->  precio_bs * (1 + porcentaje / 100)",
+          " *   valor_final_unidad_bs   = valor_mas_porcentaje / cantidad",
+          " *   valor_final_unidad_usd  = valor_final_unidad_bs / tasa",
+          " */",
+          "",
+          "/** Normaliza cualquier valor a un número finito; NaN / Infinity / null -> 0. */",
+          "export function toFiniteNumber(value: unknown): number {",
+          "  const n = typeof value === \"number\" ? value : Number(value)",
+          "  return Number.isFinite(n) ? n : 0",
+          "}",
+          "",
+          "/** Redondea a 4 decimales (precisión de las columnas numeric de Postgres). */",
+          "export function round4(value: number): number {",
+          "  if (!Number.isFinite(value)) return 0",
+          "  const rounded = Math.round(value * 10000) / 10000",
+          "  return Object.is(rounded, -0) ? 0 : rounded",
+          "}",
+          "",
+          "/**",
+          " * Calcula los 4 campos derivados a partir de los 4 campos que ingresa el usuario.",
+          " * Función pura y determinista: mismas entradas -> mismas salidas.",
+          " *",
+          " * Guardas:",
+          " *  - cantidad <= 0  -> valor_final_unidad_bs = 0 y valor_final_unidad_usd = 0 (evita division por cero)",
+          " *  - tasa <= 0      -> valor_final_unidad_usd = 0",
+          " *  - cualquier resultado no finito -> 0",
+          " */",
+          "export function calculateDerived(input: CalcInput): DerivedValues {",
+          "  const precio_usd = toFiniteNumber(input.precio_usd)",
+          "  const cantidad = toFiniteNumber(input.cantidad)",
+          "  const porcentaje = toFiniteNumber(input.porcentaje)",
+          "  const tasa = toFiniteNumber(input.tasa)",
+          "",
+          "  // 1. Precio (Bs) = Tasa * Precio ($)",
+          "  const precio_bs = tasa * precio_usd",
+          "",
+          "  // 2. Valor mas el % = Precio (Bs) INCREMENTADO en el porcentaje (no una suma del numero)",
+          "  const valor_mas_porcentaje = precio_bs * (1 + porcentaje / 100)",
+          "",
+          "  // 3. Valor Final por Unidad (Bs) = Valor mas el % / Cantidad",
+          "  const valor_final_unidad_bs = cantidad > 0 ? valor_mas_porcentaje / cantidad : 0",
+          "",
+          "  // 4. Valor Final por Unidad ($) = Valor Final por Unidad (Bs) / Tasa",
+          "  const valor_final_unidad_usd = tasa > 0 ? valor_final_unidad_bs / tasa : 0",
+          "",
+          "  return {",
+          "    precio_bs: round4(precio_bs),",
+          "    valor_mas_porcentaje: round4(valor_mas_porcentaje),",
+          "    valor_final_unidad_bs: round4(valor_final_unidad_bs),",
+          "    valor_final_unidad_usd: round4(valor_final_unidad_usd),",
+          "  }",
+          "}",
+          "",
+          "/**",
+          " * Devuelve la fila completa (entradas + derivados) lista para persistir.",
+          " * Se usa al crear, al editar y al aplicar la tasa global.",
+          " */",
+          "export function withDerived<T extends CalcInput>(input: T): T & DerivedValues {",
+          "  return { ...input, ...calculateDerived(input) }",
+          "}",
+          "",
+          "/** Reemplaza la tasa de un producto y recalcula todo (usado por la Tasa Global). */",
+          "export function applyRate<T extends CalcInput>(input: T, tasa: number): T & DerivedValues {",
+          "  const next = { ...input, tasa: toFiniteNumber(tasa) }",
+          "  return { ...next, ...calculateDerived(next) }",
+          "}"
+        ]
+      },
+      {
+        "path": "lib/validation.ts",
+        "nota": "Validación compartida cliente/servidor. Sin zod, sin dependencias.",
+        "lineas": [
+          "import type { FieldErrors, ProductInput } from \"@/lib/types\"",
+          "",
+          "export const NOMBRE_MAX_LENGTH = 120",
+          "",
+          "/**",
+          " * Convierte el texto de un input en número. Acepta coma o punto como separador",
+          " * decimal y separadores de miles con espacio. Devuelve null si no es un número válido.",
+          " */",
+          "export function parseNumberField(raw: string | number | null | undefined): number | null {",
+          "  if (typeof raw === \"number\") return Number.isFinite(raw) ? raw : null",
+          "  if (raw == null) return null",
+          "  const cleaned = String(raw).trim().replace(/\\s/g, \"\").replace(\",\", \".\")",
+          "  if (cleaned === \"\") return null",
+          "  const n = Number(cleaned)",
+          "  return Number.isFinite(n) ? n : null",
+          "}",
+          "",
+          "/** Igual que parseNumberField pero un valor vacío significa 0 (campo opcional). */",
+          "export function parseOptionalNumberField(raw: string | number | null | undefined): number | null {",
+          "  if (typeof raw === \"string\" && raw.trim() === \"\") return 0",
+          "  if (raw == null) return 0",
+          "  return parseNumberField(raw)",
+          "}",
+          "",
+          "export type ValidationResult =",
+          "  | { ok: true; value: ProductInput }",
+          "  | { ok: false; errors: FieldErrors }",
+          "",
+          "/**",
+          " * Valida los campos que ingresa el usuario. Se ejecuta en el cliente (para pintar",
+          " * errores por campo) y OTRA VEZ en el servidor (nunca confiar en el cliente).",
+          " */",
+          "export function validateProductInput(input: Partial<ProductInput>): ValidationResult {",
+          "  const errors: FieldErrors = {}",
+          "",
+          "  const nombre = typeof input.nombre === \"string\" ? input.nombre.trim() : \"\"",
+          "  if (nombre === \"\") {",
+          "    errors.nombre = \"El nombre es obligatorio.\"",
+          "  } else if (nombre.length > NOMBRE_MAX_LENGTH) {",
+          "    errors.nombre = `El nombre no puede superar ${NOMBRE_MAX_LENGTH} caracteres.`",
+          "  }",
+          "",
+          "  const precio_usd = parseNumberField(input.precio_usd as number)",
+          "  if (precio_usd === null || precio_usd < 0) {",
+          "    errors.precio_usd = \"Ingresa un precio válido.\"",
+          "  }",
+          "",
+          "  const cantidad = parseNumberField(input.cantidad as number)",
+          "  if (cantidad === null || cantidad <= 0) {",
+          "    errors.cantidad = \"La cantidad debe ser mayor que 0.\"",
+          "  }",
+          "",
+          "  const porcentaje = parseOptionalNumberField(input.porcentaje as number)",
+          "  if (porcentaje === null || porcentaje < 0) {",
+          "    errors.porcentaje = \"Ingresa un porcentaje válido.\"",
+          "  }",
+          "",
+          "  const tasa = parseNumberField(input.tasa as number)",
+          "  if (tasa === null || tasa <= 0) {",
+          "    errors.tasa = \"La tasa debe ser mayor que 0.\"",
+          "  }",
+          "",
+          "  if (Object.keys(errors).length > 0) return { ok: false, errors }",
+          "",
+          "  return {",
+          "    ok: true,",
+          "    value: {",
+          "      nombre,",
+          "      precio_usd: precio_usd as number,",
+          "      cantidad: cantidad as number,",
+          "      porcentaje: porcentaje as number,",
+          "      tasa: tasa as number,",
+          "    },",
+          "  }",
+          "}",
+          "",
+          "/** Normaliza un nombre para comparar duplicados: sin acentos, sin caso, sin espacios extra. */",
+          "export function normalizeName(value: string): string {",
+          "  return value",
+          "    .normalize(\"NFD\")",
+          "    .replace(/\\p{Diacritic}/gu, \"\")",
+          "    .trim()",
+          "    .toLowerCase()",
+          "    .replace(/\\s+/g, \" \")",
+          "}"
+        ]
+      },
+      {
+        "path": "lib/supabase/server.ts",
+        "nota": "'server-only' garantiza un error de build si alguien lo importa desde un componente cliente. La service role key nunca llega al navegador.",
+        "lineas": [
+          "import \"server-only\"",
+          "import { createClient as createSupabaseClient, type SupabaseClient } from \"@supabase/supabase-js\"",
+          "",
+          "let cached: SupabaseClient | null = null",
+          "",
+          "/**",
+          " * Cliente Supabase de servidor con service role.",
+          " * La app es pública (sin login), pero la tabla tiene RLS activo y sin políticas:",
+          " * toda lectura/escritura pasa obligatoriamente por este cliente en el servidor.",
+          " */",
+          "export function createClient(): SupabaseClient {",
+          "  if (cached) return cached",
+          "",
+          "  const url = process.env.NEXT_PUBLIC_SUPABASE_URL",
+          "  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY",
+          "",
+          "  if (!url) {",
+          "    throw new Error(\"Falta la variable de entorno NEXT_PUBLIC_SUPABASE_URL.\")",
+          "  }",
+          "  if (!serviceRoleKey) {",
+          "    throw new Error(\"Falta la variable de entorno SUPABASE_SERVICE_ROLE_KEY.\")",
+          "  }",
+          "",
+          "  cached = createSupabaseClient(url, serviceRoleKey, {",
+          "    auth: { persistSession: false, autoRefreshToken: false },",
+          "  })",
+          "",
+          "  return cached",
+          "}"
+        ]
+      },
+      {
+        "path": "lib/data.ts",
+        "nota": "Postgres devuelve numeric como string: mapProductRow es obligatorio para no romper los cálculos ni el formato.",
+        "lineas": [
+          "import \"server-only\"",
+          "import { createClient } from \"@/lib/supabase/server\"",
+          "import { toFiniteNumber } from \"@/lib/calculations\"",
+          "import type { Product } from \"@/lib/types\"",
+          "",
+          "export const PRODUCTS_TABLE = \"products\"",
+          "",
+          "export const PRODUCT_COLUMNS =",
+          "  \"id, nombre, precio_usd, cantidad, porcentaje, tasa, precio_bs, valor_mas_porcentaje, valor_final_unidad_bs, valor_final_unidad_usd, created_at\"",
+          "",
+          "/** Convierte una fila cruda de Postgres (numeric -> string) en un Product tipado. */",
+          "export function mapProductRow(row: Record<string, unknown>): Product {",
+          "  return {",
+          "    id: toFiniteNumber(row.id),",
+          "    nombre: String(row.nombre ?? \"\"),",
+          "    precio_usd: toFiniteNumber(row.precio_usd),",
+          "    cantidad: toFiniteNumber(row.cantidad),",
+          "    porcentaje: toFiniteNumber(row.porcentaje),",
+          "    tasa: toFiniteNumber(row.tasa),",
+          "    precio_bs: toFiniteNumber(row.precio_bs),",
+          "    valor_mas_porcentaje: toFiniteNumber(row.valor_mas_porcentaje),",
+          "    valor_final_unidad_bs: toFiniteNumber(row.valor_final_unidad_bs),",
+          "    valor_final_unidad_usd: toFiniteNumber(row.valor_final_unidad_usd),",
+          "    created_at: String(row.created_at ?? \"\"),",
+          "  }",
+          "}",
+          "",
+          "/**",
+          " * Todos los productos en ORDEN DE INSERCIÓN (id ascendente).",
+          " * No cambiar el criterio de orden: el orden estático es un requisito del producto.",
+          " */",
+          "export async function getProducts(): Promise<Product[]> {",
+          "  const supabase = createClient()",
+          "  const { data, error } = await supabase",
+          "    .from(PRODUCTS_TABLE)",
+          "    .select(PRODUCT_COLUMNS)",
+          "    .order(\"id\", { ascending: true })",
+          "",
+          "  if (error) {",
+          "    console.log(\"[v0] getProducts error:\", error.message)",
+          "    throw new Error(\"No se pudo cargar el inventario.\")",
+          "  }",
+          "",
+          "  return (data ?? []).map((row) => mapProductRow(row as Record<string, unknown>))",
+          "}",
+          "",
+          "/** Cuenta productos con el mismo nombre (case-insensitive) para la advertencia de duplicado. */",
+          "export async function countByName(nombre: string): Promise<number> {",
+          "  const supabase = createClient()",
+          "  const { count, error } = await supabase",
+          "    .from(PRODUCTS_TABLE)",
+          "    .select(\"id\", { count: \"exact\", head: true })",
+          "    .ilike(\"nombre\", nombre.trim())",
+          "",
+          "  if (error) {",
+          "    console.log(\"[v0] countByName error:\", error.message)",
+          "    return 0",
+          "  }",
+          "",
+          "  return count ?? 0",
+          "}"
+        ]
+      },
+      {
+        "path": "app/actions/products.ts",
+        "nota": "Las 4 Server Actions. Nunca lanzan al cliente: siempre devuelven ActionResult. Todas recalculan con calculateDerived y revalidan '/'.",
+        "lineas": [
+          "\"use server\"",
+          "",
+          "import { revalidatePath } from \"next/cache\"",
+          "import { calculateDerived } from \"@/lib/calculations\"",
+          "import { countByName, mapProductRow, PRODUCT_COLUMNS, PRODUCTS_TABLE } from \"@/lib/data\"",
+          "import { createClient } from \"@/lib/supabase/server\"",
+          "import { validateProductInput } from \"@/lib/validation\"",
+          "import type { ActionResult, Product, ProductInput } from \"@/lib/types\"",
+          "",
+          "const UPSERT_CHUNK_SIZE = 500",
+          "",
+          "function firstMessage(errors: Record<string, string>): string {",
+          "  return Object.values(errors)[0] ?? \"Revisa los datos ingresados.\"",
+          "}",
+          "",
+          "/**",
+          " * Crea un producto. Si el nombre ya existe y force !== true, devuelve code 'DUPLICATE'",
+          " * para que el cliente muestre la advertencia. La advertencia NO es bloqueante:",
+          " * al reintentar con force: true, el duplicado SIEMPRE se crea.",
+          " */",
+          "export async function createProduct(",
+          "  input: ProductInput,",
+          "  options?: { force?: boolean },",
+          "): Promise<ActionResult<Product>> {",
+          "  const parsed = validateProductInput(input)",
+          "  if (!parsed.ok) {",
+          "    return { ok: false, code: \"VALIDATION\", error: firstMessage(parsed.errors), fieldErrors: parsed.errors }",
+          "  }",
+          "  const value = parsed.value",
+          "",
+          "  try {",
+          "    if (!options?.force) {",
+          "      const existing = await countByName(value.nombre)",
+          "      if (existing > 0) {",
+          "        return {",
+          "          ok: false,",
+          "          code: \"DUPLICATE\",",
+          "          error: `Ya existe un producto llamado «${value.nombre}». ¿Deseas agregarlo de todas formas?`,",
+          "        }",
+          "      }",
+          "    }",
+          "",
+          "    const supabase = createClient()",
+          "    const { data, error } = await supabase",
+          "      .from(PRODUCTS_TABLE)",
+          "      .insert({ ...value, ...calculateDerived(value) })",
+          "      .select(PRODUCT_COLUMNS)",
+          "      .single()",
+          "",
+          "    if (error) throw error",
+          "",
+          "    revalidatePath(\"/\")",
+          "    return { ok: true, data: mapProductRow(data as Record<string, unknown>) }",
+          "  } catch (error) {",
+          "    console.log(\"[v0] createProduct error:\", error)",
+          "    return { ok: false, code: \"UNKNOWN\", error: \"No se pudo agregar el producto. Intenta de nuevo.\" }",
+          "  }",
+          "}",
+          "",
+          "/**",
+          " * Actualiza un producto y recalcula sus derivados.",
+          " * Editar la tasa aquí es la 'tasa individual': no afecta a los demás productos.",
+          " * En edición NO se advierte por nombre duplicado (solo se exige al agregar).",
+          " */",
+          "export async function updateProduct(id: number, input: ProductInput): Promise<ActionResult<Product>> {",
+          "  if (!Number.isInteger(id) || id <= 0) {",
+          "    return { ok: false, code: \"VALIDATION\", error: \"Producto inválido.\" }",
+          "  }",
+          "",
+          "  const parsed = validateProductInput(input)",
+          "  if (!parsed.ok) {",
+          "    return { ok: false, code: \"VALIDATION\", error: firstMessage(parsed.errors), fieldErrors: parsed.errors }",
+          "  }",
+          "  const value = parsed.value",
+          "",
+          "  try {",
+          "    const supabase = createClient()",
+          "    const { data, error } = await supabase",
+          "      .from(PRODUCTS_TABLE)",
+          "      .update({ ...value, ...calculateDerived(value) })",
+          "      .eq(\"id\", id)",
+          "      .select(PRODUCT_COLUMNS)",
+          "      .maybeSingle()",
+          "",
+          "    if (error) throw error",
+          "    if (!data) {",
+          "      return { ok: false, code: \"NOT_FOUND\", error: \"El producto ya no existe.\" }",
+          "    }",
+          "",
+          "    revalidatePath(\"/\")",
+          "    return { ok: true, data: mapProductRow(data as Record<string, unknown>) }",
+          "  } catch (error) {",
+          "    console.log(\"[v0] updateProduct error:\", error)",
+          "    return { ok: false, code: \"UNKNOWN\", error: \"No se pudo guardar el producto. Intenta de nuevo.\" }",
+          "  }",
+          "}",
+          "",
+          "/** Elimina un producto. La confirmación se muestra en el cliente ANTES de llamar aquí. */",
+          "export async function deleteProduct(id: number): Promise<ActionResult<{ id: number }>> {",
+          "  if (!Number.isInteger(id) || id <= 0) {",
+          "    return { ok: false, code: \"VALIDATION\", error: \"Producto inválido.\" }",
+          "  }",
+          "",
+          "  try {",
+          "    const supabase = createClient()",
+          "    const { error } = await supabase.from(PRODUCTS_TABLE).delete().eq(\"id\", id)",
+          "    if (error) throw error",
+          "",
+          "    revalidatePath(\"/\")",
+          "    return { ok: true, data: { id } }",
+          "  } catch (error) {",
+          "    console.log(\"[v0] deleteProduct error:\", error)",
+          "    return { ok: false, code: \"UNKNOWN\", error: \"No se pudo eliminar el producto. Intenta de nuevo.\" }",
+          "  }",
+          "}",
+          "",
+          "/**",
+          " * TASA GLOBAL: sobrescribe la tasa de TODOS los productos sin excepción",
+          " * (incluidos los que tenían una tasa individual distinta) y recalcula sus 4 derivados.",
+          " * El cálculo se hace en JS con calculateDerived para mantener una sola fuente de verdad.",
+          " */",
+          "export async function applyGlobalRate(tasa: number): Promise<ActionResult<{ updated: number }>> {",
+          "  const nuevaTasa = Number(tasa)",
+          "  if (!Number.isFinite(nuevaTasa) || nuevaTasa <= 0) {",
+          "    return { ok: false, code: \"VALIDATION\", error: \"La tasa global debe ser un número mayor que 0.\" }",
+          "  }",
+          "",
+          "  try {",
+          "    const supabase = createClient()",
+          "    const { data, error } = await supabase",
+          "      .from(PRODUCTS_TABLE)",
+          "      .select(\"id, precio_usd, cantidad, porcentaje\")",
+          "      .order(\"id\", { ascending: true })",
+          "",
+          "    if (error) throw error",
+          "",
+          "    const rows = data ?? []",
+          "    if (rows.length === 0) {",
+          "      revalidatePath(\"/\")",
+          "      return { ok: true, data: { updated: 0 } }",
+          "    }",
+          "",
+          "    const payload = rows.map((row) => {",
+          "      const base = {",
+          "        precio_usd: Number(row.precio_usd),",
+          "        cantidad: Number(row.cantidad),",
+          "        porcentaje: Number(row.porcentaje),",
+          "        tasa: nuevaTasa,",
+          "      }",
+          "      return { id: Number(row.id), tasa: nuevaTasa, ...calculateDerived(base) }",
+          "    })",
+          "",
+          "    // Upsert por lotes: requiere que products.id sea 'generated BY DEFAULT as identity'.",
+          "    for (let i = 0; i < payload.length; i += UPSERT_CHUNK_SIZE) {",
+          "      const chunk = payload.slice(i, i + UPSERT_CHUNK_SIZE)",
+          "      const { error: upsertError } = await supabase",
+          "        .from(PRODUCTS_TABLE)",
+          "        .upsert(chunk, { onConflict: \"id\" })",
+          "      if (upsertError) throw upsertError",
+          "    }",
+          "",
+          "    revalidatePath(\"/\")",
+          "    return { ok: true, data: { updated: payload.length } }",
+          "  } catch (error) {",
+          "    console.log(\"[v0] applyGlobalRate error:\", error)",
+          "    return { ok: false, code: \"UNKNOWN\", error: \"No se pudo aplicar la tasa global. Intenta de nuevo.\" }",
+          "  }",
+          "}"
+        ]
+      }
+    ],
+    "contrato_para_los_componentes_cliente": {
+      "importaciones": "import { createProduct, updateProduct, deleteProduct, applyGlobalRate } from '@/app/actions/products'",
+      "manejo_de_duplicado": "const res = await createProduct(input); if (!res.ok && res.code === 'DUPLICATE') { abrir AlertDialog con res.error; al confirmar → await createProduct(input, { force: true }) } else if (!res.ok) { toast.error(res.error) } else { toast.success('Producto agregado') }",
+      "errores_por_campo": "Si !res.ok && res.code === 'VALIDATION', usar res.fieldErrors para pintar el error debajo de cada input (no como toast) y hacer focus en el primer campo inválido.",
+      "preview_en_vivo": "En los modales, importar calculateDerived de '@/lib/calculations' y recalcular con useMemo sobre los valores del formulario parseados con parseNumberField / parseOptionalNumberField. NUNCA reimplementar las fórmulas en el componente.",
+      "optimistic_ui": "useOptimistic sobre la lista + useTransition para los envíos; al resolver la action, revalidatePath('/') ya devuelve el estado real del servidor. Si la action falla, el estado optimista se descarta solo al re-renderizar con los props del servidor: mostrar toast de error y no cerrar el modal.",
+      "tasa_global": "const res = await applyGlobalRate(valor); if (res.ok) toast.success(`Tasa global aplicada a ${res.data.updated} productos`)"
+    },
+    "verificacion_manual_de_formulas": "Con precio_usd=1.2, cantidad=24, porcentaje=35, tasa=40 → calculateDerived debe devolver exactamente { precio_bs: 48, valor_mas_porcentaje: 64.8, valor_final_unidad_bs: 2.7, valor_final_unidad_usd: 0.0675 }. Si no coincide, la implementación está mal: revisar que el porcentaje sea un incremento (× 1.35) y no una suma."
+  },
+
+  "validaciones": {
+    "nombre": "Requerido. trim() no vacío. Máx 120 caracteres. Mensaje: 'El nombre es obligatorio.'",
+    "precio_usd": "Requerido. Número finito >= 0. Acepta ',' o '.' como separador decimal. Mensaje: 'Ingresa un precio válido.'",
+    "cantidad": "Requerido. Número finito > 0 (se usa como divisor). Mensaje: 'La cantidad debe ser mayor que 0.'",
+    "porcentaje": "Opcional. Vacío → 0. Número finito >= 0. Mensaje: 'Ingresa un porcentaje válido.'",
+    "tasa": "Requerido. Número finito > 0. Mensaje: 'La tasa debe ser mayor que 0.'",
+    "ux_errores": "Mostrar el error debajo del campo, no como toast, y hacer focus en el primer campo inválido."
+  },
+
+  "design_system": {
+    "direccion": "Editorial-industrial monocromo: base marfil muy claro, tinta casi negra, tipografía display serif de alto contraste para nombres y cifras, microtipografía en mayúsculas con tracking amplio para labels, bordes de 1px nítidos y sombras muy sutiles. Un único acento ácido usado con extrema moderación (barra de Tasa Global y foco). NO gradientes, NO blobs, NO emojis, NO stats decorativas.",
+    "elemento_firma": "El 'Valor Final por Unidad (Bs)' en cada tarjeta: cifra grande (text-4xl/5xl), tabular-nums, tracking negativo, con la unidad 'Bs' en tamaño pequeño y color muted. Es el único dato con peso visual fuerte; el resto de la tarjeta es silencioso.",
+    "fuentes": {
+      "maximo": 2,
+      "display": "Instrument_Serif (next/font/google, weight '400', subsets ['latin'], variable '--font-display') → usada en el wordmark, nombres de producto y cifras grandes vía clase font-display.",
+      "sans": "Geist (next/font/google, subsets ['latin'], variable '--font-sans') → body, labels, inputs, botones. Usar tabular-nums en cualquier número."
+    },
+    "tokens": {
+      "nota": "Definir en app/globals.css con oklch y exponer en @theme inline. Máximo 5 colores: marfil, tinta, gris medio, gris borde, acento ácido.",
+      "light": {
+        "--background": "oklch(0.985 0.002 90)",
+        "--foreground": "oklch(0.145 0 0)",
+        "--card": "oklch(1 0 0)",
+        "--card-foreground": "oklch(0.145 0 0)",
+        "--popover": "oklch(1 0 0)",
+        "--popover-foreground": "oklch(0.145 0 0)",
+        "--primary": "oklch(0.145 0 0)",
+        "--primary-foreground": "oklch(0.985 0 0)",
+        "--secondary": "oklch(0.965 0.002 90)",
+        "--secondary-foreground": "oklch(0.205 0 0)",
+        "--muted": "oklch(0.965 0.002 90)",
+        "--muted-foreground": "oklch(0.556 0 0)",
+        "--accent": "oklch(0.93 0.19 108)",
+        "--accent-foreground": "oklch(0.145 0 0)",
+        "--destructive": "oklch(0.44 0.16 27)",
+        "--destructive-foreground": "oklch(0.985 0 0)",
+        "--border": "oklch(0.9 0.002 90)",
+        "--input": "oklch(0.9 0.002 90)",
+        "--ring": "oklch(0.145 0 0)",
+        "--radius": "0.25rem"
+      },
+      "dark": {
+        "aplicar": "Definir .dark por consistencia con shadcn, pero NO añadir toggle de tema (no fue pedido).",
+        "--background": "oklch(0.145 0 0)",
+        "--foreground": "oklch(0.985 0 0)",
+        "--card": "oklch(0.19 0 0)",
+        "--muted-foreground": "oklch(0.7 0 0)",
+        "--border": "oklch(0.28 0 0)",
+        "--accent": "oklch(0.9 0.19 108)",
+        "--accent-foreground": "oklch(0.145 0 0)"
+      }
+    },
+    "reglas_tailwind": [
+      "Usar SOLO tokens semánticos (bg-background, text-foreground, border-border, bg-card, text-muted-foreground, bg-accent/text-accent-foreground). Prohibido bg-white / text-black / bg-black.",
+      "Escala de espaciado de Tailwind (p-4, gap-6, py-8...); sin valores arbitrarios.",
+      "Flexbox por defecto; grid solo para la rejilla de tarjetas.",
+      "Nunca mezclar gap con margin/padding en el mismo elemento; nunca usar space-*.",
+      "Títulos con text-balance / párrafos con text-pretty.",
+      "leading-relaxed en texto de cuerpo."
+    ],
+    "layout": {
+      "contenedor": "mx-auto w-full max-w-6xl px-4 py-8 md:px-6 md:py-12",
+      "toolbar": "Sticky top-0 con bg-background/80 backdrop-blur y border-b: contiene buscador (flex-1), botón 'Agregar producto' y la barra de Tasa Global. En móvil se apila (flex-col gap-3), en md+ en una fila.",
+      "tarjeta": "border border-border bg-card rounded-[var(--radius)] p-5 transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-[0_1px_0_0_var(--border),0_8px_24px_-12px_rgb(0_0_0/0.18)] focus-within:ring-1 focus-within:ring-ring",
+      "responsive": "Mobile-first. Tarjetas 1 col → sm:2 → xl:3. Modales full-width con margen en móvil. Cifra grande baja a text-3xl en móvil.",
+      "accesibilidad": [
+        "<main>, <header> semánticos; h1 único.",
+        "Todos los botones icon-only con <span className=\"sr-only\">.",
+        "Labels asociados a inputs (htmlFor/id).",
+        "Focus visible con ring; navegación por teclado en tarjetas y modales (Dialog de shadcn ya gestiona focus trap y Escape).",
+        "aria-live='polite' en el contador de resultados de la búsqueda."
+      ]
+    },
+    "motion": "Solo lo que ya trae el Dialog (fade/zoom de tw-animate-css) + hover lift de la tarjeta. Nada más."
+  },
+
+  "textos_ui": {
+    "titulo_app": "Inventario",
+    "subtitulo": "Gestión de bodega",
+    "buscador_placeholder": "Buscar producto por nombre…",
+    "boton_agregar": "Agregar producto",
+    "tasa_global_label": "Tasa Global",
+    "tasa_global_boton": "Aplicar a todos",
+    "tasa_global_confirmacion": "Esto sobrescribirá la tasa de los {n} productos del inventario. ¿Continuar?",
+    "modal_agregar_titulo": "Nuevo producto",
+    "modal_editar_titulo": "Editar producto",
+    "confirmar_eliminar": "¿Estás seguro de que deseas eliminar este producto?",
+    "advertencia_duplicado": "Ya existe un producto llamado «{nombre}». ¿Deseas agregarlo de todas formas?",
+    "acciones": { "guardar": "Guardar", "cancelar": "Cancelar", "eliminar": "Eliminar", "forzar_duplicado": "Agregar de todas formas" },
+    "toasts": {
+      "creado": "Producto agregado",
+      "actualizado": "Producto actualizado",
+      "eliminado": "Producto eliminado",
+      "tasa_aplicada": "Tasa global aplicada a {n} productos",
+      "error_generico": "Ocurrió un error. Intenta de nuevo."
+    },
+    "vacio": { "titulo": "Tu inventario está vacío", "descripcion": "Agrega tu primer producto para comenzar." },
+    "sin_resultados": { "titulo": "Sin resultados", "descripcion": "Ningún producto coincide con «{q}»." },
+    "labels_modal": ["Nombre", "Precio ($)", "Cantidad (Stock)", "Porcentaje (%)", "Tasa", "Precio (Bs)", "Valor más el %", "Valor Final por Unidad (Bs)", "Valor Final por Unidad ($)"]
+  },
+
+  "casos_borde": [
+    { "caso": "cantidad = 0 o negativa", "manejo": "Bloqueado por validación; además calculateDerived devuelve 0 en los valores por unidad." },
+    { "caso": "tasa = 0", "manejo": "Bloqueado por validación; valor_final_unidad_usd = 0 si llegara a ocurrir." },
+    { "caso": "porcentaje vacío", "manejo": "Se asume 0." },
+    { "caso": "input con coma decimal (1,25)", "manejo": "parseNumberField normaliza a punto." },
+    { "caso": "numeric de Postgres llega como string", "manejo": "Mapear con Number() en lib/data.ts y en el retorno de las actions." },
+    { "caso": "nombres duplicados", "manejo": "Permitidos; solo advertencia informativa." },
+    { "caso": "inventario grande (>1000 productos)", "manejo": "Renderizado simple es aceptable; applyGlobalRate en chunks de 500. No introducir virtualización (no fue pedido)." },
+    { "caso": "dos usuarios simultáneos (app pública)", "manejo": "No hay bloqueo optimista; last-write-wins. revalidatePath refresca al terminar cada acción. No implementar realtime (no fue pedido)." },
+    { "caso": "formato de números y hidratación", "manejo": "Usar locales fijos ('es-VE' / 'en-US') en lib/format.ts, nunca el locale del navegador." },
+    { "caso": "falta de env vars", "manejo": "lib/supabase/server.ts lanza error claro en español; app/error.tsx lo presenta con botón Reintentar." }
+  ],
+
+  "plan_de_ejecucion_por_pasos": [
+    { "paso": 1, "titulo": "Integración y entorno", "acciones": ["GetOrRequestIntegration(names:['Supabase'])", "GetOrRequestIntegration(fetchAll:true) para confirmar NEXT_PUBLIC_SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY", "Invocar skills supabase-on-vercel y shadcn"] },
+    { "paso": 2, "titulo": "Esquema de base de datos", "acciones": ["Aplicar base_de_datos.sql vía MCP de Supabase", "Guardar scripts/001_create_products.sql", "Verificar la tabla con un select de prueba"] },
+    { "paso": 3, "titulo": "Dependencias", "acciones": ["pnpm add @supabase/supabase-js@2.112.2", "pnpm dlx shadcn@latest add dialog alert-dialog input label separator badge skeleton sonner"] },
+    { "paso": 4, "titulo": "Núcleo de dominio", "acciones": ["lib/types.ts", "lib/calculations.ts", "lib/validation.ts", "lib/format.ts"], "verificacion": "Comprobar a mano el ejemplo del bloque 'casos_de_prueba'." },
+    { "paso": 5, "titulo": "Capa de datos y acciones", "acciones": ["lib/supabase/server.ts", "lib/data.ts", "app/actions/products.ts"] },
+    { "paso": 6, "titulo": "Diseño base", "acciones": ["app/globals.css con tokens", "app/layout.tsx con fuentes, metadata, Toaster, Analytics y <html className='bg-background'>"] },
+    { "paso": 7, "titulo": "UI de inventario", "acciones": ["app-header", "search-input", "global-rate-bar", "product-card", "product-grid", "product-form-fields", "add-product-dialog", "edit-product-dialog", "delete-product-dialog", "empty-state", "product-grid-skeleton", "inventory-view", "app/page.tsx", "app/error.tsx"] },
+    { "paso": 8, "titulo": "Endurecimiento", "acciones": ["Headers de seguridad en next.config.mjs"] },
+    { "paso": 9, "titulo": "Verificación en navegador (obligatoria)", "acciones": ["agent-browser open del preview", "snapshot + screenshot en desktop y en 390x844", "Ejecutar el flujo completo: agregar → duplicado forzado → buscar → editar (tasa individual) → tasa global → eliminar", "Leer user_read_only_context/v0_debug_logs.log si algo falla"] },
+    { "paso": 10, "titulo": "Despliegue", "acciones": ["Confirmar build limpio (pnpm build)", "Publicar en Vercel; las env vars de la integración se inyectan automáticamente", "Confirmar que la URL pública funciona sin login"] }
+  ],
+
+  "casos_de_prueba": [
+    {
+      "nombre": "Cálculo base",
+      "entrada": { "precio_usd": 1.2, "cantidad": 24, "porcentaje": 35, "tasa": 40 },
+      "esperado": { "precio_bs": 48, "valor_mas_porcentaje": 64.8, "valor_final_unidad_bs": 2.7, "valor_final_unidad_usd": 0.0675 }
+    },
+    {
+      "nombre": "Porcentaje 0 (opcional vacío)",
+      "entrada": { "precio_usd": 10, "cantidad": 5, "porcentaje": 0, "tasa": 50 },
+      "esperado": { "precio_bs": 500, "valor_mas_porcentaje": 500, "valor_final_unidad_bs": 100, "valor_final_unidad_usd": 2 }
+    },
+    {
+      "nombre": "Guarda de cantidad 0",
+      "entrada": { "precio_usd": 10, "cantidad": 0, "porcentaje": 10, "tasa": 50 },
+      "esperado": { "precio_bs": 500, "valor_mas_porcentaje": 550, "valor_final_unidad_bs": 0, "valor_final_unidad_usd": 0 }
+    },
+    {
+      "nombre": "Tasa global sobrescribe tasa individual",
+      "pasos": "Producto A con tasa 40 y producto B con tasa 55 → aplicar tasa global 60 → ambos quedan con tasa 60 y sus 4 derivados recalculados."
+    }
+  ],
+
+  "criterios_de_aceptacion": [
+    "La app carga en / sin ninguna pantalla de login.",
+    "Los productos se muestran como tarjetas que exponen únicamente nombre y Valor Final por Unidad (Bs).",
+    "El orden de las tarjetas es el de inserción y no cambia al editar ni al buscar.",
+    "El buscador filtra en vivo solo por nombre.",
+    "Agregar, editar, eliminar y aplicar tasa global persisten en Supabase de inmediato, sin botón global de guardado.",
+    "Los 4 campos calculados coinciden exactamente con las fórmulas y se recalculan en todos los escenarios.",
+    "La tasa global sobrescribe la tasa de todos los productos; la tasa individual se edita desde el modal sin afectar a otros.",
+    "El nombre duplicado muestra advertencia no bloqueante y permite continuar.",
+    "Eliminar pide confirmación.",
+    "No existe módulo de ventas, ni campos de precio unitario final editables, ni botón 'Guardar Cambios'.",
+    "Responsive correcto en 390px y en escritorio; sin errores de consola ni de hidratación.",
+    "Estética blanco/negro con personalidad (serif display, microtipografía, un solo acento), no plantilla genérica."
+  ],
+
+  "fuera_de_alcance_explicito": [
+    "Autenticación, roles, permisos.",
+    "Módulo de ventas o reportes.",
+    "Campos 'Precio unitario final (Bs)' y 'Precio unitario final ($)' editables.",
+    "Botón 'Guardar Cambios'.",
+    "Ordenamiento, paginación, exportación CSV/PDF, historial, papelera, imágenes de producto, categorías, multi-moneda adicional, modo oscuro conmutable, realtime, i18n.",
+    "Persistir la 'tasa global' como configuración en base de datos."
+  ]
+}
