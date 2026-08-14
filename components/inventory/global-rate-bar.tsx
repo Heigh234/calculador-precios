@@ -17,12 +17,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { parseNumberField } from "@/lib/validation"
+import type { Product } from "@/lib/types"
 
 type GlobalRateBarProps = {
   productCount: number
+  onApplied: (products: Product[]) => void
 }
 
-export function GlobalRateBar({ productCount }: GlobalRateBarProps) {
+export function GlobalRateBar({ productCount, onApplied }: GlobalRateBarProps) {
   const [rawValue, setRawValue] = useState("")
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -46,6 +48,7 @@ export function GlobalRateBar({ productCount }: GlobalRateBarProps) {
       if (res.ok) {
         toast.success(`Tasa global aplicada a ${res.data.updated} productos`)
         setRawValue("")
+        onApplied(res.data.products)
       } else {
         toast.error(res.error)
       }

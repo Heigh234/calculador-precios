@@ -43,6 +43,10 @@ export function InventoryView({ initialProducts }: InventoryViewProps) {
     setDeletingProduct(null)
   }
 
+  function handleGlobalRateApplied(updatedProducts: Product[]) {
+    setProducts(updatedProducts)
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-8 md:px-6 md:py-12">
       <div className="sticky top-0 z-10 flex flex-col gap-3 border-b border-border bg-background/80 py-4 backdrop-blur">
@@ -53,7 +57,9 @@ export function InventoryView({ initialProducts }: InventoryViewProps) {
             Agregar producto
           </Button>
         </div>
-        {products.length > 0 && <GlobalRateBar productCount={products.length} />}
+        {products.length > 0 && (
+          <GlobalRateBar productCount={products.length} onApplied={handleGlobalRateApplied} />
+        )}
       </div>
 
       {products.length === 0 ? (
